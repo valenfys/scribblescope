@@ -50,12 +50,15 @@ STRUCTURE_ENDPOINTS = {
     "depth": "fal-ai/image-preprocessors/depth-anything/v2",
 }
 STRUCTURE_INSTRUCTION = {
-    "lineart": "The first image is a line drawing traced from a video frame. Draw that scene, following its lines "
-               "for the position, shape and size of everything in it, in the artistic style of the other images: "
-               "match their medium, mark-making, palette, texture and level of detail. Take only the style from the "
-               "other images, never their subject matter or content. Render people as dark, simplified, "
-               "near-silhouette figures, and fill the scene with large flat shapes of colour made of visible "
-               "scribbled strokes, as in the style images.",
+    "lineart": "The first image is a line drawing traced from a video frame. Colour it in as a drawing in the "
+               "artistic style of the other images: match their medium, mark-making, palette, texture and level of "
+               "detail. Follow the line drawing exactly: every person, object, building and edge must stay in exactly "
+               "the place, size and outline shown by its lines. Do not add anything that has no lines in the first "
+               "image (no extra people, lamps, vehicles, buildings or props), do not remove, move or resize anything, "
+               "and keep the person as one separate shape that does not merge with other objects. Take only the "
+               "style from the other images, never their subject matter or content. Render people as dark, "
+               "simplified, near-silhouette figures, and fill the shapes with flat colour made of visible scribbled "
+               "strokes, as in the style images.",
     "depth": "The first image is a depth map of a video frame (near is bright, far is dark). Draw the scene it "
              "describes, keeping the position, shape and size of every person and object, in the artistic style "
              "of the other images: match their medium, mark-making, palette, texture and level of detail. Take "
