@@ -38,17 +38,21 @@ def parse_args() -> argparse.Namespace:
                    help="[edit] style references sent with each frame (rotating through --style-dir)")
     p.add_argument("--edit-model", choices=edit.MODELS, default=edit.DEFAULT_MODEL,
                    help="[edit] " + ", ".join(f"{m} (${edit.usd_per_image(m, '1K')}/frame)" for m in edit.MODELS))
+    p.add_argument("--structure", choices=["photo", "lineart", "depth"], default="photo",
+                   help="[edit] what the model sees of each frame: the photo itself, or a line-art/depth map "
+                        "of it (no photo colours or textures leak through)")
     p.add_argument("--resolution", choices=edit.RESOLUTIONS, default="1K", help="[edit] nano-banana-2 output size")
     p.add_argument("--prompt", default="", help="text description of the style/content")
     p.add_argument("--prompt-file", type=Path, help="read the style description from a file (e.g. styles/*.txt)")
     p.add_argument("--out", type=Path, help="output video (default: <video>_roto.mp4)")
     p.add_argument("--work-dir", type=Path, default=Path("work"))
-    p.add_argument("--lora", help="[flux] URL or Hugging Face path of a FLUX style LoRA")
+    p.add_argument("--lora", help="[flux] URL of a FLUX style LoRA (.safetensors)")
+    p.add_argument("--lora-scale", type=float, default=1.0, help="[flux] LoRA strength")
     p.add_argument("--control", nargs="*", choices=CONTROLS, default=["canny"],
                    help="[flux] structure guidance; pass none to disable")
     p.add_argument("--control-scale", type=float, default=0.7, help="[flux] how tightly structure is held")
     p.add_argument("--strength", type=float, default=0.75, help="[flux] 0 = original frame, 1 = fully regenerated")
-    p.add_argument("--ip-scale", type=float, default=0.7, help="[flux] strength of the reference-image style")
+    p.add_argument("--ip-scale", type=float, default=0.7, help="[flux] strength of the reference-image style; 0 disables the IP-Adapter")
     p.add_argument("--steps", type=int, default=28, help="[flux]")
     p.add_argument("--guidance", type=float, default=3.5, help="[flux]")
     p.add_argument("--seed", type=int, default=0)
@@ -68,13 +72,15 @@ def run_key(args: argparse.Namespace, fps: float) -> str:
     """Hash of everything that affects stylised output, so cached frames are never stale."""
     style_files = sorted(str(f) for f in style_paths(args))
     if args.backend == "edit":
-        keys = ["backend", "prompt", "refs", "edit_model", "resolution", "seed", "seed_mode"]
+        keys = ["backend", "prompt", "refs", "edit_model", "structure", "resolution", "seed", "seed_mode"]
     else:
-        keys = ["backend", "prompt", "lora", "control", "control_scale", "strength", "ip_scale",
+        keys = ["backend", "prompt", "lora", "lora_scale", "control", "control_scale", "strength", "ip_scale",
                 "steps", "guidance", "seed", "seed_mode", "width"]
     extra = {"style": style_files, "fps": fps}
     if args.backend == "edit":
-        extra["instruction"] = edit.INSTRUCTION  # built-in prompt text changes must invalidate cached frames
+        # Built-in prompt text changes must invalidate cached frames.
+        extra["instruction"] = (edit.INSTRUCTION if args.structure == "photo"
+                                else edit.STRUCTURE_INSTRUCTION[args.structure])
     blob = json.dumps({k: getattr(args, k) for k in keys} | extra, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:10]
 
@@ -118,9 +124,9 @@ def main() -> None:
         print(f"{len(pending)} frames to stylise with the {args.backend} backend, "
               f"est. ${len(pending) * per_frame:.2f}")
         if args.backend == "edit":
-            stylizer = edit.EditStylizer(args.edit_model, args.resolution)
+            stylizer = edit.EditStylizer(args.edit_model, args.resolution, args.structure)
         else:
-            stylizer = build_pipeline(args.control, lora=args.lora)
+            stylizer = build_pipeline(args.control, lora=args.lora, lora_scale=args.lora_scale)
 
         def work_one(i: int, f: Path) -> None:
             seed = args.seed + i if args.seed_mode == "random" else args.seed

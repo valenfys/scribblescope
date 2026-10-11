@@ -43,6 +43,34 @@ INSTRUCTION = (
 )
 
 
+# Structure maps sent in place of the photo, so its colours and textures can't leak into the result.
+# Both preprocessors are free on fal.ai.
+STRUCTURE_ENDPOINTS = {
+    "lineart": "fal-ai/image-preprocessors/lineart",
+    "depth": "fal-ai/image-preprocessors/depth-anything/v2",
+}
+STRUCTURE_INSTRUCTION = {
+    "lineart": "The first image is a line drawing traced from a video frame. Draw that scene, following its lines "
+               "for the position, shape and size of everything in it, in the artistic style of the other images: "
+               "match their medium, mark-making, palette, texture and level of detail. Take only the style from the "
+               "other images, never their subject matter or content. Render people as dark, simplified, "
+               "near-silhouette figures, and fill the scene with large flat shapes of colour made of visible "
+               "scribbled strokes, as in the style images.",
+    "depth": "The first image is a depth map of a video frame (near is bright, far is dark). Draw the scene it "
+             "describes, keeping the position, shape and size of every person and object, in the artistic style "
+             "of the other images: match their medium, mark-making, palette, texture and level of detail. Take "
+             "only the style from the other images, never their subject matter or content. Render people as dark, "
+             "simplified, near-silhouette figures, and fill the scene with large flat shapes of colour made of "
+             "visible scribbled strokes, as in the style images.",
+}
+
+
+def _structure_map_url(frame: Image.Image, structure: str) -> str:
+    result = fal_client.subscribe(STRUCTURE_ENDPOINTS[structure],
+                                  arguments={"image_url": fal_client.upload_image(frame, "jpeg")})
+    return result["image"]["url"]
+
+
 def _aspect_ratio(size: tuple[int, int]) -> str:
     w, h = size
     return min(ASPECT_RATIOS, key=lambda r: abs(int(r.split(":")[0]) / int(r.split(":")[1]) - w / h))
@@ -56,13 +84,14 @@ def _seedream_size(size: tuple[int, int], min_pixels: int) -> dict:
 
 
 class EditStylizer:
-    def __init__(self, model: str = DEFAULT_MODEL, resolution: str = "1K"):
+    def __init__(self, model: str = DEFAULT_MODEL, resolution: str = "1K", structure: str = "photo"):
         self.model = model
         self.endpoint = MODELS[model]["endpoint"]
         self.max_refs = MODELS[model]["max_refs"]
         self.min_pixels = MODELS[model].get("min_pixels")
         self.takes_seed = MODELS[model].get("seed", True)
         self.resolution = resolution
+        self.structure = structure
         self._uploads: dict[int, str] = {}
 
     def upload_style(self, img: Image.Image) -> str:
@@ -78,11 +107,16 @@ class EditStylizer:
         seed: int = 0,
     ) -> Image.Image:
         frame = frame.convert("RGB")
-        instruction = INSTRUCTION + (f" Style notes: {prompt}" if prompt else "")
+        base = INSTRUCTION if self.structure == "photo" else STRUCTURE_INSTRUCTION[self.structure]
+        instruction = base + (f" Style notes: {prompt}" if prompt else "")
+        if self.structure == "photo":
+            # Frames are sent as JPEG to keep uploads small; the model re-renders the image anyway.
+            first = fal_client.upload_image(frame, "jpeg")
+        else:
+            first = _structure_map_url(frame, self.structure)
         args = {
             "prompt": instruction,
-            # Frames are sent as JPEG to keep uploads small; the model re-renders the image anyway.
-            "image_urls": [fal_client.upload_image(frame, "jpeg")]
+            "image_urls": [first]
             + [self.upload_style(s) for s in style_images[: self.max_refs]],
         }
         if self.takes_seed:

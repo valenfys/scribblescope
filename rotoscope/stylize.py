@@ -29,6 +29,7 @@ CONTROLS = ["canny", "tile"]
 class Stylizer:
     controls: list[str]
     lora: str | None = None
+    lora_scale: float = 1.0
     # Uploaded URLs keyed by local image identity, so each style image is uploaded once.
     _uploads: dict = field(default_factory=dict)
 
@@ -38,8 +39,8 @@ class Stylizer:
         return self._uploads[id(img)]
 
 
-def build_pipeline(controls: list[str], lora: str | None = None) -> Stylizer:
-    return Stylizer(controls, lora)
+def build_pipeline(controls: list[str], lora: str | None = None, lora_scale: float = 1.0) -> Stylizer:
+    return Stylizer(controls, lora, lora_scale)
 
 
 def _fit(img: Image.Image, width: int) -> Image.Image:
@@ -89,10 +90,10 @@ def stylize_frame(
     if controls:
         # The endpoint supports one union ControlNet, which takes several control modes.
         args["controlnet_unions"] = [{"path": CONTROLNET_UNION, "controls": controls}]
-    if style_image is not None:
+    if style_image is not None and ip_scale > 0:
         args["ip_adapters"] = [IP_ADAPTER | {"image_url": s.upload_style(style_image), "scale": ip_scale}]
     if s.lora:
-        args["loras"] = [{"path": s.lora}]
+        args["loras"] = [{"path": s.lora, "scale": s.lora_scale}]
 
     result = fal_client.subscribe(ENDPOINT, arguments=args)
     return fetch_image(result["images"][0]["url"]).resize(frame.size, Image.LANCZOS)
