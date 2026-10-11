@@ -10,16 +10,20 @@ from PIL import Image
 from rotoscope.stylize import fetch_image
 
 # Per-model endpoint, price per output image, and how many style references fit alongside the frame.
+# Seedream models take an explicit size with a minimum area (`min_pixels`); Seedream 5 Lite has no seed.
 MODELS = {
     # $0.08 per image at 1K; 0.5K is 0.75x, 2K 1.5x, 4K 2x.
     "nano-banana-2": {"endpoint": "fal-ai/nano-banana-2/edit", "max_refs": 13,
                       "usd": {"0.5K": 0.06, "1K": 0.08, "2K": 0.12, "4K": 0.16}},
-    # Flat $0.03 per image; takes an explicit size, minimum 921,600 pixels.
-    "seedream-4": {"endpoint": "fal-ai/bytedance/seedream/v4/edit", "max_refs": 9, "usd": 0.03},
+    "seedream-4": {"endpoint": "fal-ai/bytedance/seedream/v4/edit", "max_refs": 9, "usd": 0.03,
+                   "min_pixels": 921_600},
+    "seedream-4.5": {"endpoint": "fal-ai/bytedance/seedream/v4.5/edit", "max_refs": 9, "usd": 0.04,
+                     "min_pixels": 2560 * 1440},
+    "seedream-5-lite": {"endpoint": "fal-ai/bytedance/seedream/v5/lite/edit", "max_refs": 9, "usd": 0.035,
+                        "min_pixels": 2560 * 1440, "seed": False},
 }
 DEFAULT_MODEL = "seedream-4"
 RESOLUTIONS = ["0.5K", "1K", "2K", "4K"]
-SEEDREAM_MIN_PIXELS = 921_600
 
 
 def usd_per_image(model: str, resolution: str) -> float:
@@ -44,10 +48,10 @@ def _aspect_ratio(size: tuple[int, int]) -> str:
     return min(ASPECT_RATIOS, key=lambda r: abs(int(r.split(":")[0]) / int(r.split(":")[1]) - w / h))
 
 
-def _seedream_size(size: tuple[int, int]) -> dict:
+def _seedream_size(size: tuple[int, int], min_pixels: int) -> dict:
     """Smallest frame-shaped size (multiple of 16) that meets Seedream's minimum area."""
     w, h = size
-    scale = (SEEDREAM_MIN_PIXELS / (w * h)) ** 0.5
+    scale = (min_pixels / (w * h)) ** 0.5
     return {"width": -(-int(w * scale) // 16) * 16, "height": -(-int(h * scale) // 16) * 16}
 
 
@@ -56,6 +60,8 @@ class EditStylizer:
         self.model = model
         self.endpoint = MODELS[model]["endpoint"]
         self.max_refs = MODELS[model]["max_refs"]
+        self.min_pixels = MODELS[model].get("min_pixels")
+        self.takes_seed = MODELS[model].get("seed", True)
         self.resolution = resolution
         self._uploads: dict[int, str] = {}
 
@@ -78,10 +84,11 @@ class EditStylizer:
             # Frames are sent as JPEG to keep uploads small; the model re-renders the image anyway.
             "image_urls": [fal_client.upload_image(frame, "jpeg")]
             + [self.upload_style(s) for s in style_images[: self.max_refs]],
-            "seed": seed,
         }
-        if self.model == "seedream-4":
-            args["image_size"] = _seedream_size(frame.size)
+        if self.takes_seed:
+            args["seed"] = seed
+        if self.min_pixels:
+            args["image_size"] = _seedream_size(frame.size, self.min_pixels)
         else:
             args |= {"aspect_ratio": _aspect_ratio(frame.size), "resolution": self.resolution, "output_format": "png"}
         result = fal_client.subscribe(self.endpoint, arguments=args)

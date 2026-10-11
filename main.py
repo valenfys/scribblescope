@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--refs", type=int, default=5,
                    help="[edit] style references sent with each frame (rotating through --style-dir)")
     p.add_argument("--edit-model", choices=edit.MODELS, default=edit.DEFAULT_MODEL,
-                   help="[edit] nano-banana-2 ($0.08/frame) or seedream-4 ($0.03/frame)")
+                   help="[edit] " + ", ".join(f"{m} (${edit.usd_per_image(m, '1K')}/frame)" for m in edit.MODELS))
     p.add_argument("--resolution", choices=edit.RESOLUTIONS, default="1K", help="[edit] nano-banana-2 output size")
     p.add_argument("--prompt", default="", help="text description of the style/content")
     p.add_argument("--prompt-file", type=Path, help="read the style description from a file (e.g. styles/*.txt)")
