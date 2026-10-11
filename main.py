@@ -133,7 +133,7 @@ def main() -> None:
     (out_dir / "args.json").write_text(json.dumps(vars(args), default=str, indent=2))
 
     palettes = [l.strip() for l in args.palettes.read_text().splitlines() if l.strip()] if args.palettes else []
-    per_frame = (edit.usd_per_image(args.edit_model, args.resolution) if args.backend == "edit"
+    per_frame = (edit.usd_per_image(args.edit_model, args.resolution, args.refs) if args.backend == "edit"
                  else FLUX_USD_PER_FRAME)
     stylizer = None
 

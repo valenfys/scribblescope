@@ -10,7 +10,8 @@ from PIL import Image
 from rotoscope.stylize import fetch_image
 
 # Per-model endpoint, price per output image, and how many style references fit alongside the frame.
-# Seedream models take an explicit size with a minimum area (`min_pixels`); Seedream 5 Lite has no seed.
+# Seedream models take an explicit size with a minimum area (`min_pixels`); Seedream 5 has no seed.
+# Seedream 5 Pro also charges per extra input image (`usd_per_ref`).
 MODELS = {
     # $0.08 per image at 1K; 0.5K is 0.75x, 2K 1.5x, 4K 2x.
     "nano-banana-2": {"endpoint": "fal-ai/nano-banana-2/edit", "max_refs": 13,
@@ -21,14 +22,20 @@ MODELS = {
                      "min_pixels": 2560 * 1440},
     "seedream-5-lite": {"endpoint": "fal-ai/bytedance/seedream/v5/lite/edit", "max_refs": 9, "usd": 0.035,
                         "min_pixels": 2560 * 1440, "seed": False},
+    "seedream-5-flash": {"endpoint": "bytedance/seedream/v5/flash/edit", "max_refs": 9, "usd": 0.027,
+                         "min_pixels": 1024 * 1024, "seed": False},
+    # $0.0675 up to 1536x1536 output (double above that); min_pixels keeps us under it.
+    "seedream-5-pro": {"endpoint": "bytedance/seedream/v5/pro/edit", "max_refs": 9, "usd": 0.0675,
+                       "usd_per_ref": 0.0045, "min_pixels": 1024 * 1024, "seed": False},
 }
 DEFAULT_MODEL = "seedream-4"
 RESOLUTIONS = ["0.5K", "1K", "2K", "4K"]
 
 
-def usd_per_image(model: str, resolution: str) -> float:
+def usd_per_image(model: str, resolution: str, refs: int = 0) -> float:
     usd = MODELS[model]["usd"]
-    return usd[resolution] if isinstance(usd, dict) else usd
+    base = usd[resolution] if isinstance(usd, dict) else usd
+    return base + MODELS[model].get("usd_per_ref", 0) * min(refs, MODELS[model]["max_refs"])
 
 
 ASPECT_RATIOS = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"]

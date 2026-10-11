@@ -59,11 +59,11 @@ These gave the best result so far (stable composition, fully drawn frames, natur
 
 | `--backend` | How it works | Cost per frame |
 |---|---|---|
-| `edit` (default) | An instruction-based image-editing model gets the frame (or its line art) plus `--refs` style references and is told to redraw it in their style. | `seedream-4` (default) $0.03, `seedream-5-lite` $0.035, `seedream-4.5` $0.04, `nano-banana-2` $0.08 at 1K |
+| `edit` (default) | An instruction-based image-editing model gets the frame (or its line art) plus `--refs` style references and is told to redraw it in their style. | `seedream-4` (default) $0.03, `seedream-5-flash` $0.027, `seedream-5-lite` $0.035, `seedream-4.5` $0.04, `seedream-5-pro` $0.0675 + $0.0045 per reference, `nano-banana-2` $0.08 at 1K |
 | `flux` | FLUX img2img with a ControlNet (`canny`/`tile`) for structure, an IP-Adapter and optional LoRA for style. Weak style transfer in testing. | ~$0.075 (kept under 1MP) |
 
 In testing, `seedream-4` gave the most childlike crayon look; `seedream-4.5` was more polished, `seedream-5-lite`
-left backgrounds photographic, and `nano-banana-2` was more painterly and less childlike.
+left backgrounds photographic, and `nano-banana-2` was more painterly and less childlike. `seedream-5-flash` and `seedream-5-pro` are not tested yet.
 
 ## Options worth knowing
 
