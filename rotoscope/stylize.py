@@ -95,7 +95,10 @@ def stylize_frame(
         args["loras"] = [{"path": s.lora}]
 
     result = fal_client.subscribe(ENDPOINT, arguments=args)
-    resp = httpx.get(result["images"][0]["url"], timeout=120, follow_redirects=True)
+    return fetch_image(result["images"][0]["url"]).resize(frame.size, Image.LANCZOS)
+
+
+def fetch_image(url: str) -> Image.Image:
+    resp = httpx.get(url, timeout=120, follow_redirects=True)
     resp.raise_for_status()
-    out = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    return out.resize(frame.size, Image.LANCZOS)
+    return Image.open(io.BytesIO(resp.content)).convert("RGB")
