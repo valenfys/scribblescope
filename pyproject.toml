@@ -3,12 +3,8 @@ name = "img2img-rotoscope"
 version = "0.1.0"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "torch",
-    "diffusers",
-    "transformers",
-    "accelerate",
-    "safetensors",
-    "controlnet_aux",
+    "fal-client",
+    "opencv-python-headless",
     "pillow",
     "tqdm",
 ]

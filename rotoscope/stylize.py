@@ -1,119 +1,101 @@
-"""SD1.5 ControlNet img2img + IP-Adapter style transfer for single frames."""
+"""FLUX ControlNet img2img + IP-Adapter style transfer for single frames, run on fal.ai."""
 
-from dataclasses import dataclass
+import io
+from dataclasses import dataclass, field
 
-import torch
-from controlnet_aux import CannyDetector, LineartDetector, MidasDetector
-from diffusers import ControlNetModel, StableDiffusionControlNetImg2ImgPipeline
+import cv2
+import fal_client
+import httpx
+import numpy as np
 from PIL import Image
 
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-DTYPE = torch.float16 if DEVICE == "mps" else torch.float32
+ENDPOINT = "fal-ai/flux-general/image-to-image"
 
-CONTROLNETS = {
-    "lineart": "lllyasviel/control_v11p_sd15_lineart",
-    "canny": "lllyasviel/control_v11p_sd15_canny",
-    "depth": "lllyasviel/control_v11f1p_sd15_depth",
+# fal bills $0.075 per megapixel, rounded *up*, so stay just under 1MP per frame.
+MAX_PIXELS = 1_000_000
+
+CONTROLNET_UNION = "InstantX/FLUX.1-dev-Controlnet-Union"
+IP_ADAPTER = {
+    "path": "XLabs-AI/flux-ip-adapter",
+    "weight_name": "ip_adapter.safetensors",
+    "image_encoder_path": "openai/clip-vit-large-patch14",
 }
 
-# SD1.5 up_blocks 1-3 hold the attention layers; block_1 is the lowest-resolution one, which mostly
-# carries style/texture rather than layout (the SD1.5 analogue of InstantStyle's SDXL "up.block_0").
-IP_MODES = {
-    "style": lambda s: {"up": {"block_1": s}},
-    "full": lambda s: s,
-}
-
-NEGATIVE_PROMPT = "blurry, low quality, deformed, watermark, text"
-
-
-def _detectors(controls: list[str]) -> dict:
-    detectors = {}
-    if "lineart" in controls:
-        detectors["lineart"] = LineartDetector.from_pretrained("lllyasviel/Annotators")
-    if "canny" in controls:
-        detectors["canny"] = CannyDetector()
-    if "depth" in controls:
-        detectors["depth"] = MidasDetector.from_pretrained("lllyasviel/Annotators")
-    return detectors
+# canny: edge map computed locally. tile: the (downscaled) source frame itself.
+CONTROLS = ["canny", "tile"]
 
 
 @dataclass
 class Stylizer:
-    pipe: StableDiffusionControlNetImg2ImgPipeline
     controls: list[str]
-    detectors: dict
-    has_ip_adapter: bool
+    lora: str | None = None
+    # Uploaded URLs keyed by local image identity, so each style image is uploaded once.
+    _uploads: dict = field(default_factory=dict)
+
+    def upload_style(self, img: Image.Image) -> str:
+        if id(img) not in self._uploads:
+            self._uploads[id(img)] = fal_client.upload_image(img, "png")
+        return self._uploads[id(img)]
 
 
-def build_pipeline(
-    model: str,
-    controls: list[str],
-    ip_adapter: str | None = "ip-adapter-plus_sd15.safetensors",
-    lora: str | None = None,
-) -> Stylizer:
-    controlnets = [ControlNetModel.from_pretrained(CONTROLNETS[c], torch_dtype=DTYPE) for c in controls]
-    pipe = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
-        model,
-        controlnet=controlnets if len(controlnets) > 1 else controlnets[0],
-        torch_dtype=DTYPE,
-        safety_checker=None,
-        requires_safety_checker=False,
-    )
-    if ip_adapter:
-        pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name=ip_adapter)
-    if lora:
-        pipe.load_lora_weights(lora)
-    # No enable_attention_slicing(): it swaps out IP-Adapter's attention processors and breaks it.
-    pipe.to(DEVICE)
-    pipe.set_progress_bar_config(disable=True)
-    return Stylizer(pipe, controls, _detectors(controls), ip_adapter is not None)
+def build_pipeline(controls: list[str], lora: str | None = None) -> Stylizer:
+    return Stylizer(controls, lora)
 
 
 def _fit(img: Image.Image, width: int) -> Image.Image:
-    """Resize to `width`, keeping aspect ratio, with both sides a multiple of 8."""
-    w = width // 8 * 8
-    h = round(img.height * width / img.width / 8) * 8
+    """Resize to `width` (capped so the frame stays under MAX_PIXELS), sides a multiple of 16."""
+    scale = min(width / img.width, (MAX_PIXELS / (img.width * img.height)) ** 0.5)
+    w = int(img.width * scale) // 16 * 16
+    h = int(img.height * scale) // 16 * 16
     return img.resize((w, h), Image.LANCZOS)
+
+
+def _canny(img: Image.Image) -> Image.Image:
+    edges = cv2.Canny(cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY), 100, 200)
+    return Image.fromarray(edges).convert("RGB")
 
 
 def stylize_frame(
     s: Stylizer,
     frame: Image.Image,
-    style_images: list[Image.Image],
+    style_image: Image.Image | None,
     prompt: str,
-    width: int = 640,
-    strength: float = 0.65,
-    control_scale: float = 0.8,
-    ip_scale: float = 0.8,
-    ip_mode: str = "style",
-    steps: int = 25,
-    guidance: float = 6.0,
+    width: int = 768,
+    strength: float = 0.75,
+    control_scale: float = 0.7,
+    ip_scale: float = 0.7,
+    steps: int = 28,
+    guidance: float = 3.5,
     seed: int = 0,
 ) -> Image.Image:
     src = _fit(frame.convert("RGB"), width)
-    size = src.size
-    control_images = [
-        s.detectors[c](src, detect_resolution=min(size), image_resolution=min(size)).resize(size)
-        for c in s.controls
-    ]
+    src_url = fal_client.upload_image(src, "png")
 
-    kwargs = {}
-    if s.has_ip_adapter and style_images:
-        s.pipe.set_ip_adapter_scale(IP_MODES[ip_mode](ip_scale))
-        kwargs["ip_adapter_image"] = [style_images]
+    controls = []
+    for c in s.controls:
+        control_url = fal_client.upload_image(_canny(src), "png") if c == "canny" else src_url
+        controls.append({"control_image_url": control_url, "control_mode": c, "conditioning_scale": control_scale})
 
-    out = s.pipe(
-        prompt=prompt,
-        negative_prompt=NEGATIVE_PROMPT,
-        image=src,
-        control_image=control_images if len(control_images) > 1 else control_images[0],
-        controlnet_conditioning_scale=[control_scale] * len(control_images) if len(control_images) > 1 else control_scale,
-        strength=strength,
-        num_inference_steps=steps,
-        guidance_scale=guidance,
-        generator=torch.Generator("cpu").manual_seed(seed),
-        width=size[0],
-        height=size[1],
-        **kwargs,
-    ).images[0]
+    args = {
+        "prompt": prompt,
+        "image_url": src_url,
+        "strength": strength,
+        "image_size": {"width": src.width, "height": src.height},
+        "num_inference_steps": steps,
+        "guidance_scale": guidance,
+        "seed": seed,
+        "output_format": "png",
+    }
+    if controls:
+        # The endpoint supports one union ControlNet, which takes several control modes.
+        args["controlnet_unions"] = [{"path": CONTROLNET_UNION, "controls": controls}]
+    if style_image is not None:
+        args["ip_adapters"] = [IP_ADAPTER | {"image_url": s.upload_style(style_image), "scale": ip_scale}]
+    if s.lora:
+        args["loras"] = [{"path": s.lora}]
+
+    result = fal_client.subscribe(ENDPOINT, arguments=args)
+    resp = httpx.get(result["images"][0]["url"], timeout=120, follow_redirects=True)
+    resp.raise_for_status()
+    out = Image.open(io.BytesIO(resp.content)).convert("RGB")
     return out.resize(frame.size, Image.LANCZOS)

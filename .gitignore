@@ -5,3 +5,4 @@ work/
 *_roto.mp4
 .DS_Store
 references/
+.env
