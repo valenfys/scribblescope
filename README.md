@@ -123,7 +123,6 @@ styles/                reusable style prompts and palettes
 - Running locally (SD1.5 on a 16GB Apple Silicon Mac) was tried first and abandoned: ~25 s per frame at best,
   and portrait frames ran out of memory. All generation now happens on fal.ai.
 - Midjourney has no official API and its terms forbid automated access, so it isn't supported.
-- Only use reference footage you have the right to use; `references/` is kept out of git for that reason.
 
 ## License
 
