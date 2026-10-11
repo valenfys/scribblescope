@@ -57,7 +57,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fps", type=float, help="processing/output fps (default: source fps; e.g. 12 = 'on twos')")
     p.add_argument("--width", type=int, default=768,
                    help="[flux] generation width (capped to stay under 1MP); output keeps source resolution")
-    p.add_argument("--workers", type=int, default=4, help="frames processed concurrently on fal.ai")
+    p.add_argument("--workers", type=int, default=40,
+                   help="frames submitted to fal.ai at once; fal queues anything above your account's "
+                        "concurrency limit (2 for new accounts, up to 40 self-serve), so higher is harmless")
     p.add_argument("--preview", type=int, metavar="N", help="only stylise N evenly spaced frames, no video")
     return p.parse_args()
 

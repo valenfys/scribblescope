@@ -52,7 +52,9 @@ Choose the edit model with `--edit-model`. In testing, `seedream-4` gave the mos
   work better than long, literal ones: the model takes descriptive details too literally. Reusable prompts live
   in `styles/`; `styles/crayon-pastel.txt` is the best-performing one so far.
 - `--seed-mode` – `random` (default) uses a new seed per frame for maximum flicker; `fixed` reuses one seed.
-- `--workers` – frames processed concurrently on fal.ai (default 4).
+- `--workers` – frames submitted to fal.ai at once (default 40). fal runs up to your account's concurrency
+  limit in parallel (new accounts: 2, rising automatically to 40 with credit purchases; see the dashboard's
+  Concurrency page) and queues the rest. Queued requests still run, and are billed, if the script is stopped.
 - `--preview N` – only stylise N evenly spaced frames and write comparison images; no video.
 
 Run `uv run python main.py --help` for the full list.
