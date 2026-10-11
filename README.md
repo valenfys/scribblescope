@@ -1,4 +1,4 @@
-# img2img-rotoscope
+# Scribblescope
 
 Restyle a video frame by frame with an image model on [fal.ai](https://fal.ai), then reassemble it, keeping the
 original composition while changing colours, texture and detail. Each frame is generated independently, so the
