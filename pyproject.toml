@@ -1,6 +1,8 @@
 [project]
 name = "scribblescope"
 version = "0.1.0"
+description = "Turn live-action video into boiling, hand-drawn crayon animation, frame by frame, with image models on fal.ai"
+license = "Apache-2.0"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "fal-client",

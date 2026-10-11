@@ -124,3 +124,7 @@ styles/                reusable style prompts and palettes
   and portrait frames ran out of memory. All generation now happens on fal.ai.
 - Midjourney has no official API and its terms forbid automated access, so it isn't supported.
 - Only use reference footage you have the right to use; `references/` is kept out of git for that reason.
+
+## License
+
+Copyright 2026 Val Enfys. Licensed under the [Apache License 2.0](LICENSE).
