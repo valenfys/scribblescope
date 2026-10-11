@@ -63,8 +63,8 @@ def build_pipeline(
         pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name=ip_adapter)
     if lora:
         pipe.load_lora_weights(lora)
+    # No enable_attention_slicing(): it swaps out IP-Adapter's attention processors and breaks it.
     pipe.to(DEVICE)
-    pipe.enable_attention_slicing()
     pipe.set_progress_bar_config(disable=True)
     return Stylizer(pipe, controls, _detectors(controls), ip_adapter is not None)
 
