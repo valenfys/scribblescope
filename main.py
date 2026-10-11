@@ -1,7 +1,7 @@
 """Rotoscope a video: restyle every frame on fal.ai, then reassemble.
 
 Backends:
-    edit  instruction-based image editing (default: Nano Banana 2); frame + style refs + instruction
+    edit  instruction-based image editing (default: Seedream 4); frame + style refs + instruction
     flux  FLUX img2img + ControlNet + IP-Adapter; finer control, weaker style transfer
 
 Needs a fal.ai API key in the FAL_KEY environment variable.
@@ -34,10 +34,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--backend", choices=["edit", "flux"], default="edit")
     p.add_argument("--style-dir", type=Path,
                    help="folder of reference images in the target style; frames cycle through them")
-    p.add_argument("--refs", type=int, default=3,
+    p.add_argument("--refs", type=int, default=5,
                    help="[edit] style references sent with each frame (rotating through --style-dir)")
-    p.add_argument("--edit-model", default=edit.DEFAULT_MODEL, help="[edit] fal.ai image-editing endpoint")
-    p.add_argument("--resolution", choices=list(edit.USD_PER_IMAGE), default="1K", help="[edit] output size")
+    p.add_argument("--edit-model", choices=edit.MODELS, default=edit.DEFAULT_MODEL,
+                   help="[edit] nano-banana-2 ($0.08/frame) or seedream-4 ($0.03/frame)")
+    p.add_argument("--resolution", choices=edit.RESOLUTIONS, default="1K", help="[edit] nano-banana-2 output size")
     p.add_argument("--prompt", default="", help="text description of the style/content")
     p.add_argument("--out", type=Path, help="output video (default: <video>_roto.mp4)")
     p.add_argument("--work-dir", type=Path, default=Path("work"))
@@ -104,7 +105,8 @@ def main() -> None:
 
     pending = [(i, f) for i, f in todo if not (out_dir / f.name).exists()]
     if pending:
-        per_frame = edit.USD_PER_IMAGE[args.resolution] if args.backend == "edit" else FLUX_USD_PER_FRAME
+        per_frame = (edit.usd_per_image(args.edit_model, args.resolution) if args.backend == "edit"
+                     else FLUX_USD_PER_FRAME)
         print(f"{len(pending)} frames to stylise with the {args.backend} backend, "
               f"est. ${len(pending) * per_frame:.2f}")
         if args.backend == "edit":
