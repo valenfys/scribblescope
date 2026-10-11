@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+work/
+*_roto.mp4
+.idea/
+.DS_Store
