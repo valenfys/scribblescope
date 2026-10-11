@@ -44,12 +44,12 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def run_key(args: argparse.Namespace) -> str:
+def run_key(args: argparse.Namespace, fps: float) -> str:
     """Hash of everything that affects stylised output, so cached frames are never stale."""
     style_files = sorted(str(f) for f in style_paths(args))
     keys = ["prompt", "model", "lora", "control", "control_scale", "strength", "ip_scale",
             "ip_mode", "steps", "guidance", "seed", "seed_mode", "width"]
-    blob = json.dumps({k: getattr(args, k) for k in keys} | {"style": style_files}, sort_keys=True)
+    blob = json.dumps({k: getattr(args, k) for k in keys} | {"style": style_files, "fps": fps}, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:10]
 
 
@@ -75,7 +75,7 @@ def main() -> None:
     if not styles and not args.prompt and not args.lora:
         raise SystemExit("Give at least one of --style-dir, --prompt or --lora")
 
-    out_dir = work / f"styled_{run_key(args)}"
+    out_dir = work / f"styled_{run_key(args, fps)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "args.json").write_text(json.dumps(vars(args), default=str, indent=2))
 
