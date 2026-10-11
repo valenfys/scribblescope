@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from rotoscope import frames
-from rotoscope import edit
+from rotoscope import edit, quality
 from rotoscope.stylize import CONTROLS, build_pipeline, stylize_frame
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -44,6 +45,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resolution", choices=edit.RESOLUTIONS, default="1K", help="[edit] nano-banana-2 output size")
     p.add_argument("--prompt", default="", help="text description of the style/content")
     p.add_argument("--prompt-file", type=Path, help="read the style description from a file (e.g. styles/*.txt)")
+    p.add_argument("--palettes", type=Path,
+                   help="file of colour/lighting descriptions, one per line; each frame gets one picked at random, "
+                        "so colour varies naturally from drawing to drawing")
+    p.add_argument("--retries", type=int, default=2,
+                   help="after a full render, regenerate frames whose layout doesn't match the rest of the clip "
+                        "(new seed each time), up to this many rounds; 0 disables")
     p.add_argument("--out", type=Path, help="output video (default: <video>_roto.mp4)")
     p.add_argument("--work-dir", type=Path, default=Path("work"))
     p.add_argument("--lora", help="[flux] URL of a FLUX style LoRA (.safetensors)")
@@ -61,10 +68,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fps", type=float, help="processing/output fps (default: source fps; e.g. 12 = 'on twos')")
     p.add_argument("--width", type=int, default=768,
                    help="[flux] generation width (capped to stay under 1MP); output keeps source resolution")
-    p.add_argument("--workers", type=int, default=40,
-                   help="frames submitted to fal.ai at once; fal queues anything above your account's "
-                        "concurrency limit (2 for new accounts, up to 40 self-serve), so higher is harmless")
+    p.add_argument("--workers", type=int, default=8,
+                   help="frames submitted to fal.ai at once; fal queues anything above your account's concurrency "
+                        "limit (2 for new accounts, up to 40 self-serve). Requests already submitted still run and "
+                        "are billed if you stop the script, so this also caps the cost of a cancelled run")
     p.add_argument("--preview", type=int, metavar="N", help="only stylise N evenly spaced frames, no video")
+    p.add_argument("--range", metavar="START:END",
+                   help="only stylise this run of consecutive frames (0-based, END exclusive), no video; for "
+                        "checking motion with inspect_run.py before a full render")
     return p.parse_args()
 
 
@@ -76,7 +87,8 @@ def run_key(args: argparse.Namespace, fps: float) -> str:
     else:
         keys = ["backend", "prompt", "lora", "lora_scale", "control", "control_scale", "strength", "ip_scale",
                 "steps", "guidance", "seed", "seed_mode", "width"]
-    extra = {"style": style_files, "fps": fps}
+    extra = {"style": style_files, "fps": fps,
+             "palettes": args.palettes.read_text() if args.palettes else None}
     if args.backend == "edit":
         # Built-in prompt text changes must invalidate cached frames.
         extra["instruction"] = (edit.INSTRUCTION if args.structure == "photo"
@@ -104,6 +116,9 @@ def main() -> None:
     if args.preview:
         step = max(1, len(src_frames) // args.preview)
         todo = list(enumerate(src_frames))[::step][: args.preview]
+    elif args.range:
+        start, end = (int(x) for x in args.range.split(":"))
+        todo = list(enumerate(src_frames))[start:end]
     else:
         todo = list(enumerate(src_frames))
 
@@ -117,37 +132,69 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "args.json").write_text(json.dumps(vars(args), default=str, indent=2))
 
-    pending = [(i, f) for i, f in todo if not (out_dir / f.name).exists()]
-    if pending:
-        per_frame = (edit.usd_per_image(args.edit_model, args.resolution) if args.backend == "edit"
-                     else FLUX_USD_PER_FRAME)
-        print(f"{len(pending)} frames to stylise with the {args.backend} backend, "
-              f"est. ${len(pending) * per_frame:.2f}")
-        if args.backend == "edit":
-            stylizer = edit.EditStylizer(args.edit_model, args.resolution, args.structure)
-        else:
-            stylizer = build_pipeline(args.control, lora=args.lora, lora_scale=args.lora_scale)
+    palettes = [l.strip() for l in args.palettes.read_text().splitlines() if l.strip()] if args.palettes else []
+    per_frame = (edit.usd_per_image(args.edit_model, args.resolution) if args.backend == "edit"
+                 else FLUX_USD_PER_FRAME)
+    stylizer = None
 
-        def work_one(i: int, f: Path) -> None:
-            seed = args.seed + i if args.seed_mode == "random" else args.seed
+    def generate(items: list[tuple[int, Path, int]], desc: str) -> None:
+        """Stylise (frame index, source frame, attempt) items; each attempt uses a different seed."""
+        nonlocal stylizer
+        if stylizer is None:
+            if args.backend == "edit":
+                stylizer = edit.EditStylizer(args.edit_model, args.resolution, args.structure)
+            else:
+                stylizer = build_pipeline(args.control, lora=args.lora, lora_scale=args.lora_scale)
+            # Upload style images up front so worker threads don't race to upload the same one.
+            for img in styles:
+                stylizer.upload_style(img)
+
+        def work_one(i: int, f: Path, attempt: int) -> None:
+            seed = (args.seed + i if args.seed_mode == "random" else args.seed) + 1000 * attempt
+            prompt = args.prompt
+            if palettes:
+                prompt += (" Use these colours and this light instead of the style images' colours, without "
+                           f"changing what is drawn: {random.Random(seed).choice(palettes)}. Spread several of these "
+                           "colours across the picture; never use one colour for the whole drawing.")
             if args.backend == "edit":
                 refs = [styles[(i + k) % len(styles)] for k in range(min(args.refs, len(styles)))]
-                img = stylizer.stylize_frame(Image.open(f), refs, args.prompt, seed=seed)
+                img = stylizer.stylize_frame(Image.open(f), refs, prompt, seed=seed)
             else:
                 img = stylize_frame(
-                    stylizer, Image.open(f), styles[i % len(styles)] if styles else None, args.prompt,
+                    stylizer, Image.open(f), styles[i % len(styles)] if styles else None, prompt,
                     width=args.width, strength=args.strength, control_scale=args.control_scale,
                     ip_scale=args.ip_scale, steps=args.steps, guidance=args.guidance, seed=seed,
                 )
             img.save(out_dir / f.name)
 
-        # Upload style images up front so worker threads don't race to upload the same one.
-        for img in styles:
-            stylizer.upload_style(img)
         with ThreadPoolExecutor(args.workers) as pool:
-            futures = [pool.submit(work_one, i, f) for i, f in pending]
-            for fut in tqdm(as_completed(futures), total=len(futures), desc="stylising"):
+            futures = [pool.submit(work_one, *item) for item in items]
+            for fut in tqdm(as_completed(futures), total=len(futures), desc=desc):
                 fut.result()
+
+    pending = [(i, f) for i, f in todo if not (out_dir / f.name).exists()]
+    if pending:
+        print(f"{len(pending)} frames to stylise with the {args.backend} backend, "
+              f"est. ${len(pending) * per_frame:.2f}")
+        generate([(i, f, 0) for i, f in pending], "stylising")
+
+    # Quality pass: regenerate frames whose layout breaks from the rest of the clip. qc.json records how many
+    # rounds each frame has had, so re-running doesn't retry the same frames forever.
+    qc_path = out_dir / "qc.json"
+    qc = json.loads(qc_path.read_text()) if qc_path.exists() else {}
+    by_name = {f.name: (i, f) for i, f in todo}
+    if not args.preview and args.retries > 0:
+        for _ in range(args.retries):
+            bad = [p for p in quality.outliers([out_dir / f.name for _, f in todo])
+                   if qc.get(p.name, 0) < args.retries]
+            if not bad:
+                break
+            print(f"Regenerating {len(bad)} frame(s) that break from the clip's layout: "
+                  f"{', '.join(p.stem for p in bad)} (est. ${len(bad) * per_frame:.2f})")
+            for p in bad:
+                qc[p.name] = qc.get(p.name, 0) + 1
+            generate([(*by_name[p.name], qc[p.name]) for p in bad], "retrying")
+            qc_path.write_text(json.dumps(qc, indent=2))
 
     if args.preview:
         for _, f in todo:
@@ -157,6 +204,11 @@ def main() -> None:
             pair.paste(b, (a.width, 0))
             pair.save(out_dir / f"compare_{f.name}")
         print(f"Preview frames (original | styled): {out_dir}/compare_*.png")
+        return
+
+    if args.range:
+        print(f"Stylised frames {args.range} in {out_dir}; check motion with:\n"
+              f"  uv run python inspect_run.py {out_dir} --count {len(todo)}")
         return
 
     out_video = args.out or args.video.with_name(f"{args.video.stem}_roto.mp4")
