@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
                    help="[edit] nano-banana-2 ($0.08/frame) or seedream-4 ($0.03/frame)")
     p.add_argument("--resolution", choices=edit.RESOLUTIONS, default="1K", help="[edit] nano-banana-2 output size")
     p.add_argument("--prompt", default="", help="text description of the style/content")
+    p.add_argument("--prompt-file", type=Path, help="read the style description from a file (e.g. styles/*.txt)")
     p.add_argument("--out", type=Path, help="output video (default: <video>_roto.mp4)")
     p.add_argument("--work-dir", type=Path, default=Path("work"))
     p.add_argument("--lora", help="[flux] URL or Hugging Face path of a FLUX style LoRA")
@@ -69,7 +70,10 @@ def run_key(args: argparse.Namespace, fps: float) -> str:
     else:
         keys = ["backend", "prompt", "lora", "control", "control_scale", "strength", "ip_scale",
                 "steps", "guidance", "seed", "seed_mode", "width"]
-    blob = json.dumps({k: getattr(args, k) for k in keys} | {"style": style_files, "fps": fps}, sort_keys=True)
+    extra = {"style": style_files, "fps": fps}
+    if args.backend == "edit":
+        extra["instruction"] = edit.INSTRUCTION  # built-in prompt text changes must invalidate cached frames
+    blob = json.dumps({k: getattr(args, k) for k in keys} | extra, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:10]
 
 
@@ -81,6 +85,8 @@ def style_paths(args: argparse.Namespace) -> list[Path]:
 
 def main() -> None:
     args = parse_args()
+    if args.prompt_file:
+        args.prompt = " ".join(filter(None, [args.prompt, args.prompt_file.read_text().strip()]))
     if not os.environ.get("FAL_KEY"):
         raise SystemExit("Set FAL_KEY to your fal.ai API key (https://fal.ai/dashboard/keys)")
     fps = args.fps or frames.probe_fps(args.video)
