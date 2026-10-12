@@ -4,10 +4,13 @@ Backends:
     edit  instruction-based image editing (default: Seedream 4); frame + style refs + instruction
     flux  FLUX img2img + ControlNet + IP-Adapter; finer control, weaker style transfer
 
+Style settings (prompt, look, palettes, references, option defaults) come from a preset folder under styles/,
+chosen with --style; options given on the command line override the preset.
+
 Needs a fal.ai API key in the FAL_KEY environment variable.
 
 Example:
-    uv run python main.py clip.mp4 --style-dir styles/ --prompt "watercolour painting" --preview 3
+    uv run python main.py clip.mp4 --style crayon-pastel --fps 15 --range 15:27
 """
 
 import argparse
@@ -22,19 +25,22 @@ from PIL import Image
 from tqdm import tqdm
 
 from rotoscope import frames
-from rotoscope import edit, quality
+from rotoscope import edit, quality, styles
 from rotoscope.stylize import CONTROLS, build_pipeline, stylize_frame
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 FLUX_USD_PER_FRAME = 0.075  # fal-ai/flux-general bills per started megapixel; frames are kept under 1MP
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> tuple[argparse.Namespace, styles.Style]:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("video", type=Path)
+    p.add_argument("--style", default="crayon-pastel",
+                   help="style preset: a folder name under styles/ or a path to a preset folder")
     p.add_argument("--backend", choices=["edit", "flux"], default="edit")
     p.add_argument("--style-dir", type=Path,
-                   help="folder of reference images in the target style; frames cycle through them")
+                   help="folder of reference images in the target style; frames cycle through them "
+                        "(default: the preset's refs/ folder)")
     p.add_argument("--refs", type=int, default=5,
                    help="[edit] style references sent with each frame (rotating through --style-dir)")
     p.add_argument("--edit-model", choices=edit.MODELS, default=edit.DEFAULT_MODEL,
@@ -43,8 +49,7 @@ def parse_args() -> argparse.Namespace:
                    help="[edit] what the model sees of each frame: the photo itself, or a line-art/depth map "
                         "of it (no photo colours or textures leak through)")
     p.add_argument("--resolution", choices=edit.RESOLUTIONS, default="1K", help="[edit] nano-banana-2 output size")
-    p.add_argument("--prompt", default="", help="text description of the style/content")
-    p.add_argument("--prompt-file", type=Path, help="read the style description from a file (e.g. styles/*.txt)")
+    p.add_argument("--prompt", default="", help="style notes appended to the instruction (default: the preset's)")
     p.add_argument("--palettes", type=Path,
                    help="file of colour/lighting descriptions, one per line; each frame gets one picked at random, "
                         "so colour varies naturally from drawing to drawing")
@@ -76,10 +81,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--range", metavar="START:END",
                    help="only stylise this run of consecutive frames (0-based, END exclusive), no video; for "
                         "checking motion with inspect_run.py before a full render")
-    return p.parse_args()
+
+    # The preset supplies defaults, so it's loaded before the real parse.
+    pre, _ = p.parse_known_args()
+    style = styles.load(pre.style)
+    unknown = [k for k in style.defaults if not hasattr(pre, k)]
+    if unknown:
+        raise SystemExit(f"{style.dir / 'style.toml'}: unknown option(s) in [defaults]: {', '.join(unknown)}")
+    p.set_defaults(prompt=style.prompt, style_dir=style.refs_dir, **style.defaults)
+    return p.parse_args(), style
 
 
-def run_key(args: argparse.Namespace, fps: float) -> str:
+def run_key(args: argparse.Namespace, fps: float, look: str = "") -> str:
     """Hash of everything that affects stylised output, so cached frames are never stale."""
     style_files = sorted(str(f) for f in style_paths(args))
     if args.backend == "edit":
@@ -90,9 +103,8 @@ def run_key(args: argparse.Namespace, fps: float) -> str:
     extra = {"style": style_files, "fps": fps,
              "palettes": args.palettes.read_text() if args.palettes else None}
     if args.backend == "edit":
-        # Built-in prompt text changes must invalidate cached frames.
-        extra["instruction"] = (edit.INSTRUCTION if args.structure == "photo"
-                                else edit.STRUCTURE_INSTRUCTION[args.structure])
+        # Built-in and preset instruction text changes must invalidate cached frames.
+        extra["instruction"] = edit.instruction(args.structure, look)
     blob = json.dumps({k: getattr(args, k) for k in keys} | extra, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:10]
 
@@ -104,9 +116,8 @@ def style_paths(args: argparse.Namespace) -> list[Path]:
 
 
 def main() -> None:
-    args = parse_args()
-    if args.prompt_file:
-        args.prompt = " ".join(filter(None, [args.prompt, args.prompt_file.read_text().strip()]))
+    args, style = parse_args()
+    look = style.look.get(args.structure, "")
     if not os.environ.get("FAL_KEY"):
         raise SystemExit("Set FAL_KEY to your fal.ai API key (https://fal.ai/dashboard/keys)")
     fps = args.fps or frames.probe_fps(args.video)
@@ -128,7 +139,7 @@ def main() -> None:
     if args.backend == "edit" and not styles:
         raise SystemExit("The edit backend needs reference images in --style-dir")
 
-    out_dir = work / f"styled_{run_key(args, fps)}"
+    out_dir = work / f"styled_{run_key(args, fps, look)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "args.json").write_text(json.dumps(vars(args), default=str, indent=2))
 
@@ -142,7 +153,7 @@ def main() -> None:
         nonlocal stylizer
         if stylizer is None:
             if args.backend == "edit":
-                stylizer = edit.EditStylizer(args.edit_model, args.resolution, args.structure)
+                stylizer = edit.EditStylizer(args.edit_model, args.resolution, args.structure, look)
             else:
                 stylizer = build_pipeline(args.control, lora=args.lora, lora_scale=args.lora_scale)
             # Upload style images up front so worker threads don't race to upload the same one.

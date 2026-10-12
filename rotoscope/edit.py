@@ -44,9 +44,7 @@ INSTRUCTION = (
     "Redraw the first image in the artistic style of the other images: match their medium, mark-making, "
     "palette, texture and level of detail. Keep the first image's exact composition, framing, camera angle, "
     "and the position, pose, size and proportions of every person and object. Do not add, remove or move "
-    "anything, and do not copy any content from the style images. Render people as dark, simplified, "
-    "near-silhouette figures with little facial or clothing detail, and reduce the scene to large flat "
-    "shapes of colour filled with visible scribbled strokes, as in the style images."
+    "anything, and do not copy any content from the style images."
 )
 
 
@@ -63,16 +61,18 @@ STRUCTURE_INSTRUCTION = {
                "the place, size and outline shown by its lines. Do not add anything that has no lines in the first "
                "image (no extra people, lamps, vehicles, buildings or props), do not remove, move or resize anything, "
                "and keep the person as one separate shape that does not merge with other objects. Take only the "
-               "style from the other images, never their subject matter or content. Render people as dark, "
-               "simplified, near-silhouette figures, and fill the shapes with flat colour made of visible scribbled "
-               "strokes, as in the style images.",
+               "style from the other images, never their subject matter or content.",
     "depth": "The first image is a depth map of a video frame (near is bright, far is dark). Draw the scene it "
              "describes, keeping the position, shape and size of every person and object, in the artistic style "
              "of the other images: match their medium, mark-making, palette, texture and level of detail. Take "
-             "only the style from the other images, never their subject matter or content. Render people as dark, "
-             "simplified, near-silhouette figures, and fill the scene with large flat shapes of colour made of "
-             "visible scribbled strokes, as in the style images.",
+             "only the style from the other images, never their subject matter or content.",
 }
+
+
+def instruction(structure: str, look: str = "") -> str:
+    """The built-in instruction for `structure`, followed by the style preset's `look` for it."""
+    base = INSTRUCTION if structure == "photo" else STRUCTURE_INSTRUCTION[structure]
+    return f"{base} {look}" if look else base
 
 
 def _structure_map_url(frame: Image.Image, structure: str) -> str:
@@ -94,7 +94,8 @@ def _seedream_size(size: tuple[int, int], min_pixels: int) -> dict:
 
 
 class EditStylizer:
-    def __init__(self, model: str = DEFAULT_MODEL, resolution: str = "1K", structure: str = "photo"):
+    def __init__(self, model: str = DEFAULT_MODEL, resolution: str = "1K", structure: str = "photo",
+                 look: str = ""):
         self.model = model
         self.endpoint = MODELS[model]["endpoint"]
         self.max_refs = MODELS[model]["max_refs"]
@@ -102,6 +103,7 @@ class EditStylizer:
         self.takes_seed = MODELS[model].get("seed", True)
         self.resolution = resolution
         self.structure = structure
+        self.look = look
         self._uploads: dict[int, str] = {}
 
     def upload_style(self, img: Image.Image) -> str:
@@ -117,15 +119,14 @@ class EditStylizer:
         seed: int = 0,
     ) -> Image.Image:
         frame = frame.convert("RGB")
-        base = INSTRUCTION if self.structure == "photo" else STRUCTURE_INSTRUCTION[self.structure]
-        instruction = base + (f" Style notes: {prompt}" if prompt else "")
+        text = instruction(self.structure, self.look) + (f" Style notes: {prompt}" if prompt else "")
         if self.structure == "photo":
             # Frames are sent as JPEG to keep uploads small; the model re-renders the image anyway.
             first = fal_client.upload_image(frame, "jpeg")
         else:
             first = _structure_map_url(frame, self.structure)
         args = {
-            "prompt": instruction,
+            "prompt": text,
             "image_urls": [first]
             + [self.upload_style(s) for s in style_images[: self.max_refs]],
         }

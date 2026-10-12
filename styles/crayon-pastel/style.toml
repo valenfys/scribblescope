@@ -1,0 +1,19 @@
+description = "Naive, childlike oil pastel / crayon animation: dark simplified figures, flat scribbled colour, mostly orange and green."
+
+# Style notes appended to the built-in instruction. Keep it short: long, literal prompts get drawn literally.
+prompt = "hand-drawn oil pastel animation, flat bold colour blocks, scribbled crayon strokes, plenty of dense near-black areas and deep shadows, very little bare paper"
+
+# [edit backend] How people and shapes should be drawn; follows the built-in instruction for the --structure in use.
+# Either one string for every structure, or one per structure as here.
+[look]
+photo = "Render people as dark, simplified, near-silhouette figures with little facial or clothing detail, and reduce the scene to large flat shapes of colour filled with visible scribbled strokes, as in the style images."
+lineart = "Render people as dark, simplified, near-silhouette figures, and fill the shapes with flat colour made of visible scribbled strokes, as in the style images."
+depth = "Render people as dark, simplified, near-silhouette figures, and fill the scene with large flat shapes of colour made of visible scribbled strokes, as in the style images."
+
+# Defaults for main.py options (same names, with _ for -); anything given on the command line wins.
+# Paths are relative to this folder. Style references are read from refs/ here unless --style-dir is given.
+[defaults]
+structure = "lineart"
+refs = 2
+# Colours named after objects ("brick red") get drawn as those objects, so describe colour and light only.
+palettes = "palettes.txt"

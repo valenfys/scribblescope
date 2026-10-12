@@ -19,23 +19,19 @@ echo "FAL_KEY=your-key-here" > .env   # from https://fal.ai/dashboard/keys; .env
 
 ## Usage
 
-1. Put a few reference images in the target style in a folder (e.g. stills from a clip you like).
+1. Put a few reference images in the target style (e.g. stills from a clip you like) in the style preset's
+   `refs/` folder, e.g. `styles/crayon-pastel/refs/` (see [Style presets](#style-presets)).
 2. Render a short run of consecutive frames and check the motion:
 
    ```sh
-   uv run --env-file .env python main.py clip.mp4 \
-     --style-dir references/my-style \
-     --structure lineart --refs 2 \
-     --prompt-file styles/crayon-pastel-varied.txt \
-     --palettes styles/crayon-pastel-palettes.txt \
-     --fps 15 --range 15:27
+   uv run --env-file .env python main.py clip.mp4 --style crayon-pastel --fps 15 --range 15:27
 
    uv run python inspect_run.py work/clip/styled_<hash> --count 12
    ```
 
    `inspect_run.py` writes a filmstrip, onion skins and frame diffs to `work/clip/styled_<hash>/inspect/` and
    prints per-frame structure/stability scores (see [Inspecting motion](#inspecting-motion)).
-3. Tune the prompt and options, then drop `--range` to render the whole clip to `clip_roto.mp4`. Frames already
+3. Tune the preset and options, then drop `--range` to render the whole clip to `clip_roto.mp4`. Frames already
    rendered with the same settings are reused.
 
 `--preview N` renders N evenly spaced frames with side-by-side comparison images instead, which is quicker for
@@ -43,17 +39,42 @@ judging the look but says nothing about motion. The script prints an estimated c
 
 ## Recommended settings
 
-These gave the best result so far (stable composition, fully drawn frames, natural colour variation):
+These gave the best result so far (stable composition, fully drawn frames, natural colour variation), and are
+what `--style crayon-pastel` (the default) sets up:
 
 - `--backend edit --edit-model seedream-4` (the defaults), $0.03 per frame.
 - `--structure lineart` – each frame is first turned into a line drawing (free on fal.ai), and the model colours
   that in. Sending the photo itself lets photographic colour and texture leak through; depth maps lose too much
   detail.
 - `--refs 2` – fewer references means less of their content (rather than style) leaking into frames.
-- `--palettes styles/crayon-pastel-palettes.txt` with `--prompt-file styles/crayon-pastel-varied.txt` – each
-  frame gets a randomly chosen colour/lighting description, so colour varies from drawing to drawing at
+- the preset's `palettes.txt` – each frame gets a randomly chosen colour/lighting description, so colour varies from drawing to drawing at
   generation time. The palettes are mostly orange and green, mixed with yellow,
   blue, red and plenty of near-black.
+
+## Style presets
+
+Everything specific to a style lives in its own folder under `styles/`, picked with `--style <name>` (or a path
+to a folder). The code holds only what applies to every style: the instruction to keep the frame's composition,
+the sentence that introduces each frame's palette, model settings, caching.
+
+```
+styles/crayon-pastel/
+  style.toml     prompt, look and option defaults
+  palettes.txt   colour/lighting lines, one picked per frame (optional)
+  refs/          style reference images (gitignored; used unless --style-dir is given)
+```
+
+`style.toml` fields:
+
+- `description` – what the style is, for people reading the folder.
+- `prompt` – short style notes appended to the instruction (`--prompt` replaces it).
+- `look` – [edit backend] how people and shapes should be drawn, appended to the built-in instruction. One
+  string, or a table with one entry per `--structure` (`photo`, `lineart`, `depth`).
+- `[defaults]` – defaults for any `main.py` option, using its name with `_` for `-` (e.g. `structure`, `refs`,
+  `edit_model`, `palettes`, `lora`). Paths are relative to the preset folder. Options given on the command line
+  override them.
+
+To make a new style, copy a preset folder, add your own references to `refs/` and edit `style.toml`.
 
 ## Backends
 
@@ -70,9 +91,10 @@ left backgrounds photographic, and `nano-banana-2` was more painterly and less c
 - `--fps` – processing/output frame rate. Hand-drawn animation is often 12–15 fps; lower also means cheaper.
 - `--structure` – what the edit model sees of each frame: `photo`, `lineart` or `depth`.
 - `--refs` – style references sent per frame, rotating through `--style-dir`.
-- `--prompt` / `--prompt-file` – style description appended to the built-in instruction. Short prompts work
-  better than long, literal ones, and colour words naming objects (e.g. "brick red") can add those objects.
-- `--palettes` – file of colour/lighting lines; one is picked at random per frame. Describe colours and light
+- `--style` – style preset folder (default `crayon-pastel`); see [Style presets](#style-presets).
+- `--prompt` – replaces the preset's style notes. Short prompts work better than long, literal ones, and colour
+  words naming objects (e.g. "brick red") can add those objects.
+- `--palettes` – file of colour/lighting lines (default: the preset's); one is picked at random per frame. Describe colours and light
   only, never objects.
 - `--retries` – after a render, frames whose layout breaks from their neighbours are regenerated with a new
   seed, up to this many rounds (default 2). `qc.json` in the run folder records the attempts. It catches
@@ -100,7 +122,7 @@ Run `uv run python main.py --help` for the full list.
 
 - Extracted frames go to `work/<video>/frames_<fps>fps/`.
 - Styled frames go to `work/<video>/styled_<hash>/`, where the hash covers every setting that affects the output
-  (backend, model, prompt, palettes, references, structure, fps, seed, built-in instruction, ...). Re-running
+  (backend, model, prompt, palettes, reference file paths, structure, fps, seed, instruction and look, ...). Re-running
   with the same settings only generates missing frames, so interrupted renders resume and partial renders are
   reused by the full render.
 - `args.json` in each styled folder records the exact settings used.
@@ -112,10 +134,11 @@ Run `uv run python main.py --help` for the full list.
 main.py                CLI: extract frames, stylise, quality pass, reassemble
 inspect_run.py         motion inspection (filmstrips, onion skins, per-frame scores)
 rotoscope/frames.py    ffmpeg helpers (extract, assemble with audio)
-rotoscope/edit.py      edit backend (Seedream / Nano Banana), structure maps and instructions
+rotoscope/edit.py      edit backend (Seedream / Nano Banana), structure maps and built-in instructions
+rotoscope/styles.py    loads style presets
 rotoscope/quality.py   detects frames whose layout breaks from their neighbours
 rotoscope/stylize.py   flux backend (FLUX + ControlNet + IP-Adapter + LoRA)
-styles/                reusable style prompts and palettes
+styles/<name>/         style presets (style.toml, palettes.txt, refs/)
 ```
 
 ## Notes
