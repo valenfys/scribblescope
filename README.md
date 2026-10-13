@@ -42,7 +42,7 @@ judging the look but says nothing about motion. The script prints an estimated c
 These gave the best result so far (stable composition, fully drawn frames, natural colour variation), and are
 what `--style crayon-pastel` (the default) sets up:
 
-- `--backend edit --edit-model seedream-4` (the defaults), $0.03 per frame.
+- `--edit-model seedream-4` (the default), $0.03 per frame.
 - `--structure lineart` – each frame is first turned into a line drawing (~$0.004 extra per frame), and the model
   colours that in. Sending the photo itself lets photographic colour and texture leak through; depth maps lose too
   much detail.
@@ -68,20 +68,27 @@ styles/crayon-pastel/
 
 - `description` – what the style is, for people reading the folder.
 - `prompt` – short style notes appended to the instruction (`--prompt` replaces it).
-- `look` – [edit backend] how people and shapes should be drawn, appended to the built-in instruction. One
+- `look` – how people and shapes should be drawn, appended to the built-in instruction. One
   string, or a table with one entry per `--structure` (`photo`, `lineart`, `depth`).
 - `[defaults]` – defaults for any `main.py` option, using its name with `_` for `-` (e.g. `structure`, `refs`,
-  `edit_model`, `palettes`, `lora`). Paths are relative to the preset folder. Options given on the command line
+  `edit_model`, `palettes`). Paths are relative to the preset folder. Options given on the command line
   override them.
 
 To make a new style, copy a preset folder, add your own references to `refs/` and edit `style.toml`.
 
-## Backends
+## Models
 
-| `--backend` | How it works | Cost per frame |
-|---|---|---|
-| `edit` (default) | An instruction-based image-editing model gets the frame (or its line art) plus `--refs` style references and is told to redraw it in their style. | `seedream-4` (default) $0.03, `seedream-5-flash` $0.027, `seedream-5-lite` $0.035, `seedream-4.5` $0.04, `seedream-5-pro` $0.0675 + $0.0045 per reference, `nano-banana-2` $0.08 at 1K |
-| `flux` | FLUX img2img with a ControlNet (`canny`/`tile`) for structure, an IP-Adapter and optional LoRA for style. Weak style transfer in testing. | ~$0.075 (kept under 1MP) |
+An instruction-based image-editing model gets the frame (or its line art) plus `--refs` style references and is
+told to redraw it in their style. Pick the model with `--edit-model`:
+
+| `--edit-model` | Cost per frame |
+|---|---|
+| `seedream-4` (default) | $0.03 |
+| `seedream-5-flash` | $0.027 |
+| `seedream-5-lite` | $0.035 |
+| `seedream-4.5` | $0.04 |
+| `seedream-5-pro` | $0.0675 + $0.0045 per reference |
+| `nano-banana-2` | $0.08 at 1K |
 
 In testing, `seedream-4` gave the most childlike crayon look; `seedream-4.5` was more polished, `seedream-5-lite`
 left backgrounds photographic, and `nano-banana-2` was more painterly and less childlike. `seedream-5-flash` and `seedream-5-pro` are not tested yet.
@@ -122,7 +129,7 @@ Run `uv run python main.py --help` for the full list.
 
 - Extracted frames go to `work/<video>/frames_<fps>fps/`.
 - Styled frames go to `work/<video>/styled_<hash>/`, where the hash covers every setting that affects the output
-  (backend, model, prompt, palettes, reference file paths, structure, fps, seed, instruction and look, ...). Re-running
+  (model, prompt, palettes, reference file paths, structure, fps, seed, instruction and look, ...). Re-running
   with the same settings only generates missing frames, so interrupted renders resume and partial renders are
   reused by the full render.
 - `args.json` in each styled folder records the exact settings used.
@@ -134,10 +141,9 @@ Run `uv run python main.py --help` for the full list.
 main.py                CLI: extract frames, stylise, quality pass, reassemble
 inspect_run.py         motion inspection (filmstrips, onion skins, per-frame scores)
 rotoscope/frames.py    ffmpeg helpers (extract, assemble with audio)
-rotoscope/edit.py      edit backend (Seedream / Nano Banana), structure maps and built-in instructions
+rotoscope/edit.py      image-editing models (Seedream / Nano Banana), structure maps and built-in instructions
 rotoscope/styles.py    loads style presets
 rotoscope/quality.py   detects frames whose layout breaks from their neighbours
-rotoscope/stylize.py   flux backend (FLUX + ControlNet + IP-Adapter + LoRA)
 styles/<name>/         style presets (style.toml, palettes.txt, refs/)
 ```
 
@@ -145,6 +151,8 @@ styles/<name>/         style presets (style.toml, palettes.txt, refs/)
 
 - Running locally (SD1.5 on a 16GB Apple Silicon Mac) was tried first and abandoned: ~25 s per frame at best,
   and portrait frames ran out of memory. All generation now happens on fal.ai.
+- FLUX img2img (ControlNet + IP-Adapter, and separately crayon LoRAs) was tried and dropped: frames kept the
+  photo look or ignored the scene.
 - Midjourney has no official API and its terms forbid automated access, so it isn't supported.
 
 ## License

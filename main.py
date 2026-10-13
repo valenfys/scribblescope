@@ -1,8 +1,7 @@
 """Rotoscope a video: restyle every frame on fal.ai, then reassemble.
 
-Backends:
-    edit  instruction-based image editing (default: Seedream 4); frame + style refs + instruction
-    flux  FLUX img2img + ControlNet + IP-Adapter; finer control, weaker style transfer
+Each frame (or its line art) is sent to an instruction-based image-editing model (default: Seedream 4) with a few
+style references and an instruction to redraw it in their style.
 
 Style settings (prompt, look, palettes, references, option defaults) come from a preset folder under styles/,
 chosen with --style; options given on the command line override the preset.
@@ -26,10 +25,8 @@ from tqdm import tqdm
 
 from rotoscope import frames
 from rotoscope import edit, quality, styles
-from rotoscope.stylize import CONTROLS, build_pipeline, stylize_frame
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
-FLUX_USD_PER_FRAME = 0.075  # fal-ai/flux-general bills per started megapixel; frames are kept under 1MP
 
 
 def parse_args() -> tuple[argparse.Namespace, styles.Style]:
@@ -37,18 +34,17 @@ def parse_args() -> tuple[argparse.Namespace, styles.Style]:
     p.add_argument("video", type=Path)
     p.add_argument("--style", default="crayon-pastel",
                    help="style preset: a folder name under styles/ or a path to a preset folder")
-    p.add_argument("--backend", choices=["edit", "flux"], default="edit")
     p.add_argument("--style-dir", type=Path,
                    help="folder of reference images in the target style; frames cycle through them "
                         "(default: the preset's refs/ folder)")
     p.add_argument("--refs", type=int, default=5,
-                   help="[edit] style references sent with each frame (rotating through --style-dir)")
+                   help="style references sent with each frame (rotating through --style-dir)")
     p.add_argument("--edit-model", choices=edit.MODELS, default=edit.DEFAULT_MODEL,
-                   help="[edit] " + ", ".join(f"{m} (${edit.usd_per_image(m, '1K')}/frame)" for m in edit.MODELS))
+                   help=", ".join(f"{m} (${edit.usd_per_image(m, '1K')}/frame)" for m in edit.MODELS))
     p.add_argument("--structure", choices=["photo", "lineart", "depth"], default="photo",
-                   help="[edit] what the model sees of each frame: the photo itself, or a line-art/depth map "
+                   help="what the model sees of each frame: the photo itself, or a line-art/depth map "
                         "of it (no photo colours or textures leak through)")
-    p.add_argument("--resolution", choices=edit.RESOLUTIONS, default="1K", help="[edit] nano-banana-2 output size")
+    p.add_argument("--resolution", choices=edit.RESOLUTIONS, default="1K", help="nano-banana-2 output size")
     p.add_argument("--prompt", default="", help="style notes appended to the instruction (default: the preset's)")
     p.add_argument("--palettes", type=Path,
                    help="file of colour/lighting descriptions, one per line; each frame gets one picked at random, "
@@ -58,21 +54,10 @@ def parse_args() -> tuple[argparse.Namespace, styles.Style]:
                         "(new seed each time), up to this many rounds; 0 disables")
     p.add_argument("--out", type=Path, help="output video (default: <video>_roto.mp4)")
     p.add_argument("--work-dir", type=Path, default=Path("work"))
-    p.add_argument("--lora", help="[flux] URL of a FLUX style LoRA (.safetensors)")
-    p.add_argument("--lora-scale", type=float, default=1.0, help="[flux] LoRA strength")
-    p.add_argument("--control", nargs="*", choices=CONTROLS, default=["canny"],
-                   help="[flux] structure guidance; pass none to disable")
-    p.add_argument("--control-scale", type=float, default=0.7, help="[flux] how tightly structure is held")
-    p.add_argument("--strength", type=float, default=0.75, help="[flux] 0 = original frame, 1 = fully regenerated")
-    p.add_argument("--ip-scale", type=float, default=0.7, help="[flux] strength of the reference-image style; 0 disables the IP-Adapter")
-    p.add_argument("--steps", type=int, default=28, help="[flux]")
-    p.add_argument("--guidance", type=float, default=3.5, help="[flux]")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--seed-mode", choices=["random", "fixed"], default="random",
                    help="'random' = new noise per frame (boiling flicker), 'fixed' = same noise every frame")
     p.add_argument("--fps", type=float, help="processing/output fps (default: source fps; e.g. 12 = 'on twos')")
-    p.add_argument("--width", type=int, default=768,
-                   help="[flux] generation width (capped to stay under 1MP); output keeps source resolution")
     p.add_argument("--workers", type=int, default=8,
                    help="frames submitted to fal.ai at once; fal queues anything above your account's concurrency "
                         "limit (2 for new accounts, up to 40 self-serve). Requests already submitted still run and "
@@ -95,16 +80,11 @@ def parse_args() -> tuple[argparse.Namespace, styles.Style]:
 def run_key(args: argparse.Namespace, fps: float, look: str = "") -> str:
     """Hash of everything that affects stylised output, so cached frames are never stale."""
     style_files = sorted(str(f) for f in style_paths(args))
-    if args.backend == "edit":
-        keys = ["backend", "prompt", "refs", "edit_model", "structure", "resolution", "seed", "seed_mode"]
-    else:
-        keys = ["backend", "prompt", "lora", "lora_scale", "control", "control_scale", "strength", "ip_scale",
-                "steps", "guidance", "seed", "seed_mode", "width"]
+    keys = ["prompt", "refs", "edit_model", "structure", "resolution", "seed", "seed_mode"]
+    # Built-in and preset instruction text changes must invalidate cached frames.
     extra = {"style": style_files, "fps": fps,
-             "palettes": args.palettes.read_text() if args.palettes else None}
-    if args.backend == "edit":
-        # Built-in and preset instruction text changes must invalidate cached frames.
-        extra["instruction"] = edit.instruction(args.structure, look)
+             "palettes": args.palettes.read_text() if args.palettes else None,
+             "instruction": edit.instruction(args.structure, look)}
     blob = json.dumps({k: getattr(args, k) for k in keys} | extra, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:10]
 
@@ -134,28 +114,22 @@ def main() -> None:
         todo = list(enumerate(src_frames))
 
     styles = [Image.open(f).convert("RGB") for f in style_paths(args)]
-    if not styles and not args.prompt and not args.lora:
-        raise SystemExit("Give at least one of --style-dir, --prompt or --lora")
-    if args.backend == "edit" and not styles:
-        raise SystemExit("The edit backend needs reference images in --style-dir")
+    if not styles:
+        raise SystemExit("Put style reference images in the preset's refs/ folder or give --style-dir")
 
     out_dir = work / f"styled_{run_key(args, fps, look)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "args.json").write_text(json.dumps(vars(args), default=str, indent=2))
 
     palettes = [l.strip() for l in args.palettes.read_text().splitlines() if l.strip()] if args.palettes else []
-    per_frame = (edit.usd_per_image(args.edit_model, args.resolution, args.refs, args.structure)
-                 if args.backend == "edit" else FLUX_USD_PER_FRAME)
+    per_frame = edit.usd_per_image(args.edit_model, args.resolution, args.refs, args.structure)
     stylizer = None
 
     def generate(items: list[tuple[int, Path, int]], desc: str) -> None:
         """Stylise (frame index, source frame, attempt) items; each attempt uses a different seed."""
         nonlocal stylizer
         if stylizer is None:
-            if args.backend == "edit":
-                stylizer = edit.EditStylizer(args.edit_model, args.resolution, args.structure, look)
-            else:
-                stylizer = build_pipeline(args.control, lora=args.lora, lora_scale=args.lora_scale)
+            stylizer = edit.EditStylizer(args.edit_model, args.resolution, args.structure, look)
             # Upload style images up front so worker threads don't race to upload the same one.
             for img in styles:
                 stylizer.upload_style(img)
@@ -167,15 +141,8 @@ def main() -> None:
                 prompt += (" Use these colours and this light instead of the style images' colours, without "
                            f"changing what is drawn: {random.Random(seed).choice(palettes)}. Spread several of these "
                            "colours across the picture; never use one colour for the whole drawing.")
-            if args.backend == "edit":
-                refs = [styles[(i + k) % len(styles)] for k in range(min(args.refs, len(styles)))]
-                img = stylizer.stylize_frame(Image.open(f), refs, prompt, seed=seed)
-            else:
-                img = stylize_frame(
-                    stylizer, Image.open(f), styles[i % len(styles)] if styles else None, prompt,
-                    width=args.width, strength=args.strength, control_scale=args.control_scale,
-                    ip_scale=args.ip_scale, steps=args.steps, guidance=args.guidance, seed=seed,
-                )
+            refs = [styles[(i + k) % len(styles)] for k in range(min(args.refs, len(styles)))]
+            img = stylizer.stylize_frame(Image.open(f), refs, prompt, seed=seed)
             img.save(out_dir / f.name)
 
         with ThreadPoolExecutor(args.workers) as pool:
@@ -185,8 +152,7 @@ def main() -> None:
 
     pending = [(i, f) for i, f in todo if not (out_dir / f.name).exists()]
     if pending:
-        print(f"{len(pending)} frames to stylise with the {args.backend} backend, "
-              f"est. ${len(pending) * per_frame:.2f}")
+        print(f"{len(pending)} frames to stylise with {args.edit_model}, est. ${len(pending) * per_frame:.2f}")
         generate([(i, f, 0) for i, f in pending], "stylising")
 
     # Quality pass: regenerate frames whose layout breaks from the rest of the clip. qc.json records how many

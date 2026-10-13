@@ -1,13 +1,14 @@
 """Instruction-based style transfer for single frames with an image-editing model on fal.ai.
 
 The frame and a few style references are sent together with an instruction to redraw the frame in the
-references' style. There is no strength/ControlNet: composition is held by the instruction alone.
+references' style. Composition is held by the instruction alone.
 """
 
-import fal_client
-from PIL import Image
+import io
 
-from rotoscope.stylize import fetch_image
+import fal_client
+import httpx
+from PIL import Image
 
 # Per-model endpoint, price per output image, and how many style references fit alongside the frame.
 # Seedream models take an explicit size with a minimum area (`min_pixels`); Seedream 5 has no seed.
@@ -140,3 +141,9 @@ class EditStylizer:
             args |= {"aspect_ratio": _aspect_ratio(frame.size), "resolution": self.resolution, "output_format": "png"}
         result = fal_client.subscribe(self.endpoint, arguments=args)
         return fetch_image(result["images"][0]["url"]).resize(frame.size, Image.LANCZOS)
+
+
+def fetch_image(url: str) -> Image.Image:
+    resp = httpx.get(url, timeout=120, follow_redirects=True)
+    resp.raise_for_status()
+    return Image.open(io.BytesIO(resp.content)).convert("RGB")
