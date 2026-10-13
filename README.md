@@ -43,9 +43,9 @@ These gave the best result so far (stable composition, fully drawn frames, natur
 what `--style crayon-pastel` (the default) sets up:
 
 - `--backend edit --edit-model seedream-4` (the defaults), $0.03 per frame.
-- `--structure lineart` – each frame is first turned into a line drawing (free on fal.ai), and the model colours
-  that in. Sending the photo itself lets photographic colour and texture leak through; depth maps lose too much
-  detail.
+- `--structure lineart` – each frame is first turned into a line drawing (~$0.004 extra per frame), and the model
+  colours that in. Sending the photo itself lets photographic colour and texture leak through; depth maps lose too
+  much detail.
 - `--refs 2` – fewer references means less of their content (rather than style) leaking into frames.
 - the preset's `palettes.txt` – each frame gets a randomly chosen colour/lighting description, so colour varies from drawing to drawing at
   generation time. The palettes are mostly orange and green, mixed with yellow,

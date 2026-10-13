@@ -32,10 +32,11 @@ DEFAULT_MODEL = "seedream-4"
 RESOLUTIONS = ["0.5K", "1K", "2K", "4K"]
 
 
-def usd_per_image(model: str, resolution: str, refs: int = 0) -> float:
+def usd_per_image(model: str, resolution: str, refs: int = 0, structure: str = "photo") -> float:
     usd = MODELS[model]["usd"]
     base = usd[resolution] if isinstance(usd, dict) else usd
-    return base + MODELS[model].get("usd_per_ref", 0) * min(refs, MODELS[model]["max_refs"])
+    return (base + MODELS[model].get("usd_per_ref", 0) * min(refs, MODELS[model]["max_refs"])
+            + (STRUCTURE_USD if structure != "photo" else 0))
 
 
 ASPECT_RATIOS = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"]
@@ -49,11 +50,12 @@ INSTRUCTION = (
 
 
 # Structure maps sent in place of the photo, so its colours and textures can't leak into the result.
-# Both preprocessors are free on fal.ai.
+# fal bills the preprocessors $0.00125 per compute second; a lineart call takes ~3.3s, so ~$0.004 per frame.
 STRUCTURE_ENDPOINTS = {
     "lineart": "fal-ai/image-preprocessors/lineart",
     "depth": "fal-ai/image-preprocessors/depth-anything/v2",
 }
+STRUCTURE_USD = 0.004
 STRUCTURE_INSTRUCTION = {
     "lineart": "The first image is a line drawing traced from a video frame. Colour it in as a drawing in the "
                "artistic style of the other images: match their medium, mark-making, palette, texture and level of "
