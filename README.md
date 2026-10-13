@@ -39,8 +39,7 @@ judging the look but says nothing about motion. The script prints an estimated c
 
 ## Recommended settings
 
-These gave the best result so far (stable composition, fully drawn frames, natural colour variation), and are
-what `--style crayon-pastel` (the default) sets up:
+What `--style crayon-pastel` (the default) sets up:
 
 - `--edit-model seedream-4` (the default), $0.03 per frame.
 - `--structure lineart` – each frame is first turned into a line drawing (~$0.004 extra per frame), and the model
@@ -48,8 +47,7 @@ what `--style crayon-pastel` (the default) sets up:
   much detail.
 - `--refs 2` – fewer references means less of their content (rather than style) leaking into frames.
 - the preset's `palettes.txt` – each frame gets a randomly chosen colour/lighting description, so colour varies from drawing to drawing at
-  generation time. The palettes are mostly orange and green, mixed with yellow,
-  blue, red and plenty of near-black.
+  generation time: mostly orange and green, mixed with yellow, blue, red and plenty of near-black.
 
 ## Style presets
 
@@ -90,8 +88,7 @@ told to redraw it in their style. Pick the model with `--edit-model`:
 | `seedream-5-pro` | $0.0675 + $0.0045 per reference |
 | `nano-banana-2` | $0.08 at 1K |
 
-In testing, `seedream-4` gave the most childlike crayon look; `seedream-4.5` was more polished, `seedream-5-lite`
-left backgrounds photographic, and `nano-banana-2` was more painterly and less childlike. `seedream-5-flash` and `seedream-5-pro` are not tested yet.
+`seedream-4` gives the most childlike crayon look; the others are more polished, painterly or photographic.
 
 ## Options worth knowing
 
@@ -146,14 +143,6 @@ rotoscope/styles.py    loads style presets
 rotoscope/quality.py   detects frames whose layout breaks from their neighbours
 styles/<name>/         style presets (style.toml, palettes.txt, refs/)
 ```
-
-## Notes
-
-- Running locally (SD1.5 on a 16GB Apple Silicon Mac) was tried first and abandoned: ~25 s per frame at best,
-  and portrait frames ran out of memory. All generation now happens on fal.ai.
-- FLUX img2img (ControlNet + IP-Adapter, and separately crayon LoRAs) was tried and dropped: frames kept the
-  photo look or ignored the scene.
-- Midjourney has no official API and its terms forbid automated access, so it isn't supported.
 
 ## License
 
